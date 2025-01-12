@@ -236,7 +236,7 @@ def main(args):
 		config['screenlock_integration']['lock'] = lock_binding
 	if lockscreen_timeout and 'idle_lock_timeout' not in config['screenlock_integration']:
 		config['screenlock_integration']['idle_lock_timeout'] = lockscreen_timeout
-	if lock_backend_name and 'backend' not in config['screenlock_integration'] or config['screenlock_integration']['backend'] == 'auto':
+	if lock_backend_name and (('backend' not in config['screenlock_integration']) or (config['screenlock_integration']['backend'] == 'auto')):
 		# try to see if a supported lock backend was used
 		supported_backends = ['waylock', 'swaylock', 'gtklock']
 		for a in supported_backends:
