@@ -15,6 +15,7 @@ These are required to actually be able to log in and start the session :)
  - Cairo-Dock with Wayland support, version 3.5.99 or newer (see the wiki for instructions to [install](https://github.com/Cairo-Dock/cairo-dock-core/wiki/Installation) it or [build](https://github.com/Cairo-Dock/cairo-dock-core/wiki/Compiling-from-source) it from source).
  - [systemd](https://systemd.io/) set up according to your distribution to manage system services.
  - A login manager capable of starting Wayland sessions; tested with Gdm, but recent versions of LightDM, SDDM, etc. should also work.
+ - Pydbus (Ubuntu package: `python3-pydbus`)
 
 
 ## Main components
