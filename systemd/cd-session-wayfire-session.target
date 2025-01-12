@@ -7,4 +7,4 @@ After=graphical-session.target
 Requires=cd-session-wayfire-session-pre.target
 After=cd-session-wayfire-session-pre.target
 StopWhenUnneeded=yes
-Wants=cd-session-polkit-mate.service cairo-dock.service wayland-screenlock-proxy.service
+Wants=cd-session-polkit-mate.service cairo-dock.service wayland-screenlock-proxy.service ayatana-indicators.target
