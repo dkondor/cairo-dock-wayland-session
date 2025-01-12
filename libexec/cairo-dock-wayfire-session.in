@@ -1,0 +1,83 @@
+#!/bin/bash
+# 
+#  cairo-dock-wayfire-session -- script to start a graphical session with
+#  Cairo-Dock and Wayfire as main components
+# 
+#  Modified from: https://github.com/xdbob/sway-services
+#  Original: https://people.debian.org/~mpitt/systemd.conf-2016-graphical-session.pdf
+# 
+#  Copyright (c) 2019 Antoine Damhet
+#  Copyright 2025 Daniel Kondor <kondor.dani@gmail.com>
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in all
+#  copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#  SOFTWARE.
+#  
+
+
+# robustness: if the previous graphical session left some failed units,
+# reset them so that they don't break this startup
+for unit in $(systemctl --user --no-legend --state=failed list-units | cut -f1 -d' '); do
+	partof="$(systemctl --user show -p PartOf --value "$unit")"
+	for target in cd-session-wayfire-session.target cd-session-wayfire-session-pre.target graphical-session.target; do
+		if [ "$partof" = "$target" ]; then
+			systemctl --user reset-failed "$unit"
+			break
+		fi
+	done
+done
+
+# Source /etc/profile (needed, contains important environment variables)
+source /etc/profile
+
+# Save environment before adding to systemd (to be removed after the session is stopped)
+new_envs=$(systemctl --user show-environment | cut -d'=' -f 1 | sort | comm -13 - <(env | cut -d'=' -f 1 | sort))
+
+# Set custom path for Wayfire's config
+if [ -n "$XDG_CONFIG_HOME" ]
+then WAYFIRE_CONFIG_FILE=$XDG_CONFIG_HOME/cairo-dock-session/wayfire.ini
+else WAYFIRE_CONFIG_FILE=$HOME/.config/cairo-dock-session/wayfire.ini
+fi
+export WAYFIRE_CONFIG_FILE
+
+# Some important variables to make life easier
+export XDG_CURRENT_DESKTOP=Wayfire:GNOME
+export MOZ_ENABLE_WAYLAND=1
+export _JAVA_AWT_WM_NOREPARENTING=1
+export QT_QPA_PLATFORM=wayland
+# For some reason, we need to set this manually to work
+# (remove this if you're using a different SSH agent)
+export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/gcr/ssh
+
+# Set up the default config if this is the first time this session is run
+# (will enable the plugins required by our session and set some defaults)
+if [ ! -e $WAYFIRE_CONFIG_FILE ]
+then python3 @libexec@/cd-session-setup-wayfire-config.py
+fi
+
+# first import environment variables from the login manager
+systemctl --user import-environment $new_envs
+systemctl --user import-environment XDG_CURRENT_DESKTOP MOZ_ENABLE_WAYLAND _JAVA_AWT_WM_NOREPARENTING QT_QPA_PLATFORM WAYFIRE_CONFIG_FILE SSH_AUTH_SOCK
+
+# then start the service
+systemctl --wait --user start cd-session-wayfire-session.target
+
+# Cleanup environment (see above)
+systemctl --user unset-environment $new_envs
+systemctl --user unset-environment XDG_CURRENT_DESKTOP MOZ_ENABLE_WAYLAND _JAVA_AWT_WM_NOREPARENTING QT_QPA_PLATFORM WAYFIRE_CONFIG_FILE SSH_AUTH_SOCK
+
+

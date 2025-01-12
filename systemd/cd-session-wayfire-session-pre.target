@@ -1,0 +1,11 @@
+[Unit]
+Description=Session services which should run early before the Wayfire session is brought up
+Documentation=man:systemd.special(7)
+Requires=basic.target
+Before=graphical-session.target
+RefuseManualStart=yes
+StopWhenUnneeded=yes
+BindsTo=graphical-session-pre.target
+After=graphical-session-pre.target
+Requires=cd-session-wayfire.service
+After=cd-session-wayfire.service

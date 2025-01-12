@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Wayfire/Cairo-Dock
+Comment=Run a Wayfire session with Cairo-Dock
+Exec=@libexec@/cairo-dock-wayfire-session
+Type=Application
+TryExec=wayfire

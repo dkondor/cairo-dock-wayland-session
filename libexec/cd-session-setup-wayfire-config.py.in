@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+#
+#  cd-session-setup-wayfire-config.py
+#  
+#  Copyright 2025 Daniel Kondor <kondor.dani@gmail.com>
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in all
+#  copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#  SOFTWARE.
+#  
+
+
+import sys, os
+import configparser as conf
+import pydbus
+
+# plugins required for our session
+required_wf_plugins = ['foreign-toplevel', 'session-lock', 'ipc', 'wayfire-shell', 'autostart', 'command', 'scale',
+	'scale-title-filter', 'scale_ipc_filter', 'screenlock_integration']
+# other plugins enabled by default by Wayfire (used if the user config file contains no plugins)
+default_wf_plugins = ['alpha', 'animate', 'cube', 'decoration', 'expo', 'fast-switcher', 'fisheye', 'grid', 'gtk-shell', 'idle', 'invert', 'move', 'oswitch', 'place', 'resize', 'shortcuts-inhibit', 'switcher', 'vswitch', 'window-rules', 'wobbly', 'wrot', 'zoom']
+
+def add_binding(obj, templ, num, binding, cmd):
+	obj['binding_{}{}'.format(templ, num)] = binding
+	obj['command_{}{}'.format(templ, num)] = cmd
+
+def main(args):
+	src_file = None
+	conf_file_target = None
+	
+	####################################################################
+	# 1. parse command line options that can set custom source and
+	#    target (this is only for testing)
+	for i in range(len(args)):
+		if len(args[i]) >= 2 and args[i][0] == '-':
+			if args[i][1] == 'i':
+				src_file = args[i+1] # will throw if no argument provided
+				i += 1
+			elif args[i][1] == 'o':
+				conf_file_target = args[i+1]
+				i += 1
+	
+	####################################################################
+	# 2. find the source and target (if not given above) and read the source
+	if conf_file_target is None:
+		conf_file_target = os.environ['WAYFIRE_CONFIG_FILE'] # set by the script starting us
+		if os.path.exists(conf_file_target):
+			# config file already exists, do not change it
+			return 0
+	
+	if src_file is None:
+		user_conf_file = None
+		# Find an existing config file, copy and adapt it
+		if 'XDG_CONFIG_HOME' in os.environ:
+			user_conf_file = os.path.join(os.environ['XDG_CONFIG_HOME'], 'wayfire.ini')
+		else:
+			user_conf_file = os.path.join(os.environ['HOME'], '.config', 'wayfire.ini')
+
+		if os.path.exists(user_conf_file):
+			src_file = user_conf_file
+		else:
+			src_file = os.path.join('${datadir}', 'wayfire.ini')
+	else:
+		if not os.path.exists(src_file):
+			raise BaseException('Input file does not exist!\n')
+	
+	conf_dir = os.path.dirname(conf_file_target)
+	os.makedirs(conf_dir, exist_ok = True)
+	
+	# Open the config file and add the necessary components
+	config = conf.ConfigParser(interpolation = None)
+	config.optionxform = lambda x: x # be case sensitive
+	config.read(src_file)
+	if 'core' not in config:
+		config['core'] = { }
+	
+	
+	####################################################################
+	# 3. add the necessary plugins used in our session
+	if 'plugins' not in config['core']:
+		config['core']['plugins'] = ' '.join(default_wf_plugins + required_wf_plugins)
+	else:
+		plugins = config['core']['plugins'].split(' ')
+		to_add = list(x for x in required_wf_plugins if x not in plugins)
+		config['core']['plugins'] = ' '.join(plugins + to_add)
+	
+	
+	####################################################################
+	# 4. add the necessary autostart items
+	cmds_to_add = [
+		# "normal" commands to add which do not require special handling
+		# string to look for (+ key used when adding), command to add
+		('gsd-rfkill', '/usr/libexec/gsd-rfkill'), # TODO: find the correct path with Meson !
+		('gsd-xsettings', '/usr/libexec/gsd-xsettings'),
+		('wf-background', 'wf-background'), # TODO: check if there is an alternate background configured !
+		('nm-applet', 'nm-applet'),
+	]
+	lockscreen_timeout = None
+	
+	if 'autostart' in config:
+		# remove the special commands we will add later
+		to_remove = list()
+		for k in config['autostart']:
+			cmd = config['autostart'][k]
+			if 'dbus-update-activation-environment' in cmd:
+				to_remove.append(k)
+			elif 'systemd-notify' in cmd:
+				to_remove.append(k)
+			elif 'import-environment' in cmd:
+				to_remove.append(k)
+			elif 'swayidle' in cmd:
+				# try to extract the timeout and use it ourselves
+				cmd2 = cmd.split()
+				for i in range(len(cmd2)):
+					if cmd2[i] == 'timeout' and i + 1 < len(cmd2):
+						try:
+							swayidle_timeout = int(cmd2[i+1])
+							if swayidle_timeout > 0:
+								lockscreen_timeout = swayidle_timeout
+						except:
+							pass
+				to_remove.append(k)
+			elif 'hypridle' in cmd:
+				to_remove.append(k) # for Hypridle, the timeout is only in its config file
+			elif 'cairo-dock' in cmd:
+				# will be started by systemd
+				to_remove.append(k)
+			else:
+				for i in range(len(cmds_to_add)):
+					if cmds_to_add[i] and cmds_to_add[i][0] in cmd:
+						cmds_to_add[i] = None
+						break
+		for k in to_remove:
+			del config['autostart'][k]
+	else:
+		config['autostart'] = { }
+	
+	# add all commands needed
+	# first the "special" ones
+	config['autostart']['a001_dbus'] = 'dbus-update-activation-environment WAYLAND_DISPLAY DISPLAY XAUTHORITY WAYFIRE_SOCKET'
+	# note: sh -c is superfluous actually, Wayfire will add it anyway, but it works
+	config['autostart']['a002_systemd'] = '/bin/sh -c "systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XAUTHORITY WAYFIRE_SOCKET && systemd-notify --ready"'
+	# this is not a command but a setting -- we only need wf-background which we start separately
+	config['autostart']['autostart_wf_shell'] = 'false'
+	
+	for x in cmds_to_add:
+		if x:
+			config['autostart'][x[0]] = x[1]
+	
+	
+	####################################################################
+	# 5. add some useful keybindings + adjust the command for locking the screeen
+	add_mediakeys = True
+	add_terminal = True
+	lock_backend_name = None
+	lock_binding = None
+	if 'command' in config:
+		lock_command_name = None
+		known_terminals = ['foot', 'alacritty', 'sakura', 'gnome-terminal', 'konsole', 'x-terminal-emulator',
+			'xterm', 'rxvt', 'xfce4-terminal'] # TODO: add more
+		known_screenlockers = ['gtklock', 'shaderlock', 'waylock', 'lock-session'] # also matches swaylock and "loginctl lock-session"
+		for k in config['command']:
+			if k[0:8] == 'command_':
+				cmd = config['command'][k]
+				if add_mediakeys and 'pactl' in cmd:
+					add_mediakeys = False
+					continue
+				if add_terminal:
+					for x in known_terminals:
+						if x in cmd:
+							add_terminal = False
+							break
+					if not add_terminal:
+						continue
+				if lock_command_name is None:
+					for x in known_screenlockers:
+						if x in cmd:
+							lock_command_name = k
+							lock_backend_name = cmd
+							break
+		
+		if lock_command_name is not None:
+			# we need to remove to current screenlock command, but want to configure its binding
+			del config['command'][lock_command_name]
+			binding_name = 'binding_' + lock_command_name[8:]
+			try:
+				lock_binding = config['command'][binding_name]
+			except:
+				pass
+			try:
+				del config['command'][binding_name]
+			except:
+				pass
+	else:
+		config['command'] = { }
+	
+	binding_num = 0
+	binding_key_template = 'cd_session_'
+	if add_mediakeys:
+		add_binding(config['command'], binding_key_template, binding_num, 'KEY_MUTE', 'pactl set-sink-mute @DEFAULT_SINK@ toggle')
+		binding_num += 1
+		add_binding(config['command'], binding_key_template, binding_num, 'KEY_VOLUMEDOWN', 'pactl set-sink-volume @DEFAULT_SINK@ -5%')
+		binding_num += 1
+		add_binding(config['command'], binding_key_template, binding_num, 'KEY_VOLUMEUP', 'pactl set-sink-volume @DEFAULT_SINK@ +5%')
+		binding_num += 1
+		add_binding(config['command'], binding_key_template, binding_num, 'KEY_F20', 'pactl set-source-mute @DEFAULT_SOURCE@ toggle')
+		binding_num += 1
+		add_binding(config['command'], binding_key_template, binding_num, '<ctrl> KEY_VOLUMEDOWN', 'pactl set-source-volume @DEFAULT_SOURCE@ -5%')
+		binding_num += 1
+		add_binding(config['command'], binding_key_template, binding_num, '<ctrl> KEY_VOLUMEUP', 'pactl set-source-volume @DEFAULT_SOURCE@ +5%')
+		binding_num += 1
+	
+	if add_terminal:
+		add_binding(config['command'], binding_key_template, binding_num, '<ctrl><alt>KEY_T', 'x-terminal-emulator') # hopefully set to something sensible
+		binding_num += 1
+	
+	####################################################################
+	# 8. configure wayland-screenlock-proxy
+	if 'screenlock_integration' not in config:
+		config['screenlock_integration'] = { }
+	if lock_binding and 'lock' not in config['screenlock_integration']:
+		config['screenlock_integration']['lock'] = lock_binding
+	if lockscreen_timeout and 'idle_lock_timeout' not in config['screenlock_integration']:
+		config['screenlock_integration']['idle_lock_timeout'] = lockscreen_timeout
+	if lock_backend_name and 'backend' not in config['screenlock_integration'] or config['screenlock_integration']['backend'] == 'auto':
+		# try to see if a supported lock backend was used
+		supported_backends = ['waylock', 'swaylock', 'gtklock']
+		for a in supported_backends:
+			if lock_backend_name[0:len(a)] == a:
+				config['screenlock_integration']['backend'] = a
+	
+	####################################################################
+	# 7. add keyboard layout options if needed
+	if 'input' not in config:
+		config['input'] = { }
+	if 'xkb_layout' not in config['input']:
+		# in this case, we update all options (we assume that they will
+		# not be set without xkb_layout, and also, that if the layout is
+		# set, there is no need to change anything)
+		try:
+			bus = pydbus.SystemBus()
+			locale1 = bus.get('org.freedesktop.locale1')
+			config['input']['xkb_layout'] = locale1.X11Layout
+			config['input']['xkb_model'] = locale1.X11Model
+			config['input']['xkb_options'] = locale1.X11Options
+			config['input']['xkb_variant'] = locale1.X11Variant
+			# TODO: check what happens if any of the above is an empty string !!
+		except:
+			print('Cannot get keyboard layout data from systemd!\n')
+	
+	####################################################################
+	# 8. finished, save the new config
+	with open(conf_file_target, 'w') as f:
+		config.write(f)
+	
+	return 0
+
+
+if __name__ == '__main__':
+	sys.exit(main(sys.argv[1:]))
+

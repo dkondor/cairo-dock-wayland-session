@@ -1,0 +1,10 @@
+[Unit]
+Description=PolicyKit authentication agent from the MATE desktop
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/polkit-mate-authentication-agent-1
+
+[Install]
+WantedBy=graphical-session.target

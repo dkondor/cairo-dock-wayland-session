@@ -1,0 +1,10 @@
+[Unit]
+Description=Wayfire user session
+Documentation=man:systemd.special(7)
+Requires=basic.target
+BindsTo=graphical-session.target
+After=graphical-session.target
+Requires=cd-session-wayfire-session-pre.target
+After=cd-session-wayfire-session-pre.target
+StopWhenUnneeded=yes
+Wants=cd-session-polkit-mate.service cairo-dock.service wayland-screenlock-proxy.service
